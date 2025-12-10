@@ -68,11 +68,8 @@ adjusted_daily AS (
         day_of_week,
         weekly_total,
         daily_cases_raw,
-        -- Сумма raw-значений по неделе
         SUM(daily_cases_raw) OVER (PARTITION BY week_number) as week_sum_raw,
-        -- Разница, которую нужно распределить
         weekly_total - SUM(daily_cases_raw) OVER (PARTITION BY week_number) as diff_to_distribute,
-        -- Номер дня в неделе для распределения остатка
         ROW_NUMBER() OVER (PARTITION BY week_number ORDER BY 
             CASE 
                 WHEN day_of_week = 3 THEN 1 -- Среда (самый высокий процент)
@@ -90,7 +87,6 @@ final_daily_data AS (
         dd,
         week_number,
         weekly_total,
-        -- Добавляем diff к дням с наивысшим приоритетом
         CASE 
             WHEN diff_to_distribute > 0 AND dist_priority <= diff_to_distribute 
                 THEN daily_cases_raw + 1
