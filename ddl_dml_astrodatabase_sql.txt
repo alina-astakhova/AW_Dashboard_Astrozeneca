@@ -1,0 +1,109 @@
+SQL
+CREATE SCHEMA astro;
+
+DROP TABLE IF EXISTS astro.raw;
+
+CREATE TABLE astro.raw (
+    date DATE,
+    productid INT,
+    rid INT, 
+    phid INT, 
+    quantity INT,
+    amount DECIMAL(10,2)
+);
+
+DROP TABLE IF EXISTS astro.raw_temp;
+
+CREATE TABLE astro.raw_temp (
+    date TEXT,
+    productid TEXT,
+    rid TEXT,
+    phid TEXT,
+    quantity TEXT,
+    amount TEXT
+);
+
+COPY astro.raw_temp FROM '/Users/astakhova/aw/data_cleaned.csv' 
+WITH (
+    FORMAT CSV,
+    HEADER true,
+    DELIMITER ',',
+    QUOTE '"',
+    ENCODING 'UTF8'
+);
+
+
+INSERT INTO astro.raw (date, productid, rid, phid, quantity, amount)
+SELECT 
+    CAST(date AS DATE),
+    CAST(productid AS INT),
+    CAST(rid AS INT),
+    CAST(phid AS INT),
+    CAST(quantity AS INT),
+    CAST(amount AS DECIMAL(10,2))
+FROM astro.raw_temp;
+
+### Проверка на дубли
+SELECT COUNT(*) as total_duplicates
+FROM (
+    SELECT date, productid, rid, phid, quantity, amount
+    FROM astro.raw
+    GROUP BY date, productid, rid, phid, quantity, amount
+    HAVING COUNT(*) > 1
+) as duplicates;
+
+
+CREATE TABLE astro.products (
+    productid INT, 
+    pgroup TEXT,
+    type TEXT, 
+    name TEXT, 
+    packsize CHAR(1)
+);
+
+
+CREATE TABLE astro.chains(
+	phid INT, 
+	phname TEXT, 
+	chain TEXT
+	);
+
+COPY astro.chains FROM '/Users/astakhova/aw/chains.csv' 
+WITH (
+    FORMAT CSV,
+    HEADER true,
+    DELIMITER ';',
+    QUOTE '"',
+    ENCODING 'UTF8'
+);
+
+CREATE TABLE astro.regions(
+	rid INT, 
+	rname TEXT, 
+	fd TEXT,
+	population INT,
+	salary INT
+	);
+
+COPY astro.regions FROM '/Users/astakhova/aw/regions.csv' 
+WITH (
+    FORMAT CSV,
+    HEADER true,
+    DELIMITER ';',
+    QUOTE '"',
+    ENCODING 'UTF8'
+);
+
+CREATE TABLE astro.cases(
+	weeknum INT, 
+	cases INT
+	);
+
+COPY astro.cases FROM '/Users/astakhova/aw/cases.csv' 
+WITH (
+    FORMAT CSV,
+    HEADER true,
+    DELIMITER ';',
+    QUOTE '"',
+    ENCODING 'UTF8'
+);
