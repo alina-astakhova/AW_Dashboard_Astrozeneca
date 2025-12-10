@@ -1,0 +1,66 @@
+bash
+# Получение id каталога, токена
+yc init
+yc config list
+
+# Создание сети
+yc vpc network create \
+  --name postgresql-network \
+  --description "Network for PostgreSQL cluster"
+
+# Создание подсети
+yc vpc subnet create \
+  --name postgresql-subnet \
+  --zone ru-central1-a \
+  --range 10.1.0.0/16 \
+  --network-name postgresql-network
+
+
+# Создание группы безопасности
+yc vpc security-group create \
+  --name postgresql-sg \
+  --description "Security group for PostgreSQL cluster" \
+  --network-name postgresql-network
+
+# Добавление правила для PostgreSQL (6432)
+yc vpc security-group update-rules postgresql-sg \
+  --add-rule direction=ingress,port=6432,protocol=tcp,v4-cidrs=0.0.0.0/0
+
+# Добавление правила для SSH (22) - опционально
+yc vpc security-group update-rules postgresql-sg \
+  --add-rule direction=ingress,port=22,protocol=tcp,v4-cidrs=0.0.0.0/0
+
+# Посмотреть текущие правила группы безопасности
+yc vpc security-group get postgresql-sg
+
+
+# Создание кластера
+yc managed-postgresql cluster create \
+  --name my-astro-cluster \
+  --environment production \
+  --network-name atro-network \
+  --resource-preset b1.medium \
+  --disk-size 10 \
+  --disk-type network-ssd \
+  --host zone-id=ru-central1-a,subnet-name=atro-subnet \
+  --postgresql-version 15 \
+  --user name=****,password=**** \
+  --database name=pharmadb,owner=****
+
+
+# Скачиваем корневой SSL сертификат Yandex Cloud
+curl -o root.crt "https://storage.yandexcloud.net/cloud-certs/CA.pem"
+# Проверяем что файл скачан
+ls -la root.crt
+
+### Подключение в DBeaver 
+Main tab
+- Host: rc1a-****.mdb.yandexcloud.net
+- Port: 6432
+- Database: ****
+- Username: ****
+- Password: ****
+
+SSL tab
+SSL Mode: Verify-full
+CA certificate: /Users/astakhova/aw/root.crt

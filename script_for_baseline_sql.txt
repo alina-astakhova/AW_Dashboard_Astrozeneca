@@ -1,0 +1,109 @@
+SQL
+
+# Генерация данных для линии тренда заболеваемости в 2024 год
+
+DROP TABLE IF EXISTS astro.cases_2024;
+CREATE TABLE astro.cases_2024 (
+    dd DATE PRIMARY KEY,
+    cases INT NOT NULL,
+    week_number INT NOT NULL,
+    weekly_total INT NOT NULL
+);
+WITH weekly_data AS (
+    SELECT * FROM (VALUES
+        (1, 33), (2, 38), (3, 45), (4, 52), (5, 60), (6, 68), (7, 76), (8, 85),
+        (9, 92), (10, 99), (11, 105), (12, 98), (13, 90), (14, 82), (15, 75),
+        (16, 68), (17, 62), (18, 55), (19, 48), (20, 42), (21, 35), (22, 28),
+        (23, 25), (24, 22), (25, 24), (26, 27), (27, 31), (28, 35), (29, 40),
+        (30, 45), (31, 50), (32, 55), (33, 60), (34, 65), (35, 70), (36, 75),
+        (37, 78), (38, 82), (39, 80), (40, 78), (41, 75), (42, 72), (43, 68),
+        (44, 63), (45, 55), (46, 58), (47, 62), (48, 66), (49, 70), (50, 67),
+        (51, 63), (52, 55)
+    ) AS t(weeknum, cases)
+),
+all_dates AS (
+    SELECT 
+        generate_series(
+            '2024-01-01'::date,
+            '2024-12-31'::date,
+            '1 day'::interval
+        )::date as dd
+),
+dates_with_info AS (
+    SELECT 
+        dd,
+        EXTRACT(ISODOW FROM dd) as day_of_week, -- 1=Пн, 2=Вт, ..., 7=Вс
+        EXTRACT(WEEK FROM dd)::int as week_number
+    FROM all_dates
+),
+daily_pattern AS (
+    SELECT * FROM (VALUES
+        (1, 0.16), -- Понедельник
+        (2, 0.18), -- Вторник
+        (3, 0.20), -- Среда
+        (4, 0.19), -- Четверг
+        (5, 0.15), -- Пятница
+        (6, 0.08), -- Суббота
+        (7, 0.04)  -- Воскресенье
+    ) AS t(day_num, proportion)
+),
+daily_calculations AS (
+    SELECT 
+        d.dd,
+        d.week_number,
+        d.day_of_week,
+        w.cases as weekly_total,
+        dp.proportion,
+        -- Вычисляем дневные случаи с округлением до целого
+        ROUND(w.cases * dp.proportion)::int as daily_cases_raw
+    FROM dates_with_info d
+    JOIN weekly_data w ON d.week_number = w.weeknum
+    JOIN daily_pattern dp ON d.day_of_week = dp.day_num
+    WHERE w.weeknum IS NOT NULL
+),
+adjusted_daily AS (
+    SELECT 
+        dd,
+        week_number,
+        day_of_week,
+        weekly_total,
+        daily_cases_raw,
+        -- Сумма raw-значений по неделе
+        SUM(daily_cases_raw) OVER (PARTITION BY week_number) as week_sum_raw,
+        -- Разница, которую нужно распределить
+        weekly_total - SUM(daily_cases_raw) OVER (PARTITION BY week_number) as diff_to_distribute,
+        -- Номер дня в неделе для распределения остатка
+        ROW_NUMBER() OVER (PARTITION BY week_number ORDER BY 
+            CASE 
+                WHEN day_of_week = 3 THEN 1 -- Среда (самый высокий процент)
+                WHEN day_of_week = 2 THEN 2 -- Вторник
+                WHEN day_of_week = 4 THEN 3 -- Четверг
+                WHEN day_of_week = 1 THEN 4 -- Понедельник
+                WHEN day_of_week = 5 THEN 5 -- Пятница
+                WHEN day_of_week = 6 THEN 6 -- Суббота
+                ELSE 7 -- Воскресенье
+            END) as dist_priority
+    FROM daily_calculations
+),
+final_daily_data AS (
+    SELECT 
+        dd,
+        week_number,
+        weekly_total,
+        -- Добавляем diff к дням с наивысшим приоритетом
+        CASE 
+            WHEN diff_to_distribute > 0 AND dist_priority <= diff_to_distribute 
+                THEN daily_cases_raw + 1
+            WHEN diff_to_distribute < 0 AND dist_priority <= ABS(diff_to_distribute)
+                THEN daily_cases_raw - 1
+            ELSE daily_cases_raw
+        END as daily_cases
+    FROM adjusted_daily
+)
+INSERT INTO astro.cases_2024 (dd, cases, week_number, weekly_total)
+SELECT 
+    dd,
+    daily_cases,
+    week_number,
+    weekly_total
+FROM final_daily_data;

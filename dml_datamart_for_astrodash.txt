@@ -1,0 +1,142 @@
+SQL
+
+CREATE TABLE astro.dm_dashboard_main AS
+WITH raw_data AS (
+    SELECT 
+        -- Базовые поля продаж
+        r.ProductId,
+        r.Rid,
+        r.Phid,
+        r.Quantity,
+        r.Amount,
+        
+        -- ДАТЫ (все форматы для фильтров)
+        DATE(r.Date) as Date,
+        DATE_TRUNC('month', r.Date)::DATE as Month,
+        EXTRACT(YEAR FROM r.Date) as Year,
+        EXTRACT(MONTH FROM r.Date) as Month_Num,
+        EXTRACT(DOW FROM r.Date) as Day_Of_Week,
+        TO_CHAR(r.Date, 'Month') as Month_Name,
+        TO_CHAR(r.Date, 'Mon') as Month_Short_Name,
+        TO_CHAR(r.Date, 'YYYY-MM') as Year_Month, -- для фильтра "список по месяцам"
+        TO_CHAR(r.Date, 'Mon YYYY') as Month_Year_Display,
+        
+        -- ЦЕПОЧКИ
+        COALESCE(NULLIF(c.chain, 'нет'), 'Несетевая') as Chain_Type,
+        c.chain as Chain_Original,
+        c.phname as Pharmacy_Name,
+        
+        -- ПРОДУКТЫ (все возможные фильтры)
+        p.pgroup as Product_Group,
+        p.name as Product_Name,
+        p.packsize as Pack_Size,
+        CASE p.packsize 
+            WHEN 'S' THEN 'Малая' 
+            WHEN 'M' THEN 'Средняя' 
+            WHEN 'L' THEN 'Большая' 
+        END as Pack_Size_Name,
+        
+        -- РЕГИОНЫ
+        reg.rname as Region_Name,
+        reg.fd as Federal_District,
+        reg.population as Population,
+        reg.salary as Avg_Salary,
+        
+        -- ЗАБОЛЕВАЕМОСТЬ
+        cases.cases as Daily_Cases
+        
+    FROM astro.raw r
+    LEFT JOIN astro.chains c ON r.Phid = c.phid
+    LEFT JOIN astro.products p ON r.ProductId = p.productid
+    LEFT JOIN astro.regions reg ON r.Rid = reg.rid
+    LEFT JOIN astro.cases_2024 cases ON r.Date = cases.dd
+)
+SELECT 
+    *,
+    -- Базовые расчеты
+    COALESCE(Amount / NULLIF(Quantity, 0), 0) as Price_Per_Pack,
+    
+    -- Флаги для быстрой агрегации
+    CASE WHEN Pack_Size = 'L' THEN 1 ELSE 0 END as Is_Large_Pack,
+    CASE WHEN Pack_Size = 'M' THEN 1 ELSE 0 END as Is_Medium_Pack,
+    CASE WHEN Pack_Size = 'S' THEN 1 ELSE 0 END as Is_Small_Pack,
+    
+    -- Для статистики по дням недели
+    CASE 
+        WHEN EXTRACT(DOW FROM Date) IN (0, 6) THEN 'Выходной' 
+        ELSE 'Будний' 
+    END as Day_Type
+    
+FROM raw_data;
+
+CREATE INDEX idx_dm_main_year_month ON astro.dm_dashboard_main(Year_Month);
+CREATE INDEX idx_dm_main_product_name ON astro.dm_dashboard_main(Product_Name);
+CREATE INDEX idx_dm_main_region_name ON astro.dm_dashboard_main(Region_Name);
+CREATE INDEX idx_dm_main_chain_type ON astro.dm_dashboard_main(Chain_Type);
+CREATE INDEX idx_dm_main_pack_size_name ON astro.dm_dashboard_main(Pack_Size_Name);
+CREATE INDEX idx_dm_main_composite ON astro.dm_dashboard_main(Date, Rid, ProductId, Chain_Type);
+
+На дашборде будут фильтры - виджеты должны меняться интерактивно - все поля должны быть в витрине, агрегации не должны быть фиксированными
+1) календарь (период от даты и до даты)
+2) список по месяцам
+3) группа препаратов
+4) препаратов
+5) регион продажи
+6) тип аптеки
+7) размер упаковки
+
+На дашборде будут реализованы следующие виджеты:
+Вкладка 1
+Уровень 1:
+Общая выручка (руб.) + разница к прошлому периоду
+Активных SKU (шт.) + доля от всего ассортимента
+Оборачиваемость портфеля = Продажи / (Средняя цена * Кол-во SKU)
+Доля сетевых продаж (%) + разница с несетевыми в пп
+Доля сезонных товаров (% товаров с CV > 50%)
+Выручка от сезонных (%) + пиковый месяц (текст)
+
+Уровень 2: 
+Анализ эффективности каналов и географии
+
+Виджет 2.1: Radar Chart "Профиль региона"
+Оси (нормированные 0-100%):
+Насыщенность рынка (руб./чел.)
+Доля премиума (% L-упаковок)
+Эффективность каналов (руб./аптеку)
+Сезонность региона (CV продаж)
+Концентрация портфеля (% топ-3 товаров)
+Средний чек (руб./уп.)
+
+Виджет 2.2: Диаграмма Санкей "Потоки денег: Регион → Тип сети → ABC"
+Уровень 1: 6 регионов
+Уровень 2: Сетевая / Несетевая
+Уровень 3: A / B / C товары (по выручке в этом потоке)
+
+Уровень 3:
+Виджет 3.1: Treemap "Иерархия: Группа → Товар"
+Первый уровень: Группы препаратов (pgroup) — площадь = выручка в выбранном срезе
+Второй уровень: При клике на группу → разбивается на товары (name)
+Виджет 3.2: Бар-чарт "Топ-10 товаров в срезе"
+Виджет 3.3: Столбчатая диаграмма "Продажи по дням недели"
+
+Виджет 3.4: Круговая диаграмма "Распределение по упаковкам"
+Для выбранного среза
+Группы: S / M / L
+Выручка (руб.)
+Количество упаковок (шт.)
+Средняя цена за упаковку
+
+Вкладка 2. 
+Уровень 1
+- Коэффициент сезонности портфеля Средний CV по всем товарам (%)
+- Сумма продаж в пиковый месяц (руб.)/пиковый месяц
+- Доля товаров со стабильными продажами (CV < 30%)
+- A, В, С Структура
+Уровень 2
+2.1. Линейный чарт по дням: заболеваемость, сумма продаж
+2.2.  ABC анализ - таблица
+Уровень 3. 
+3.1. What-if изменение заболеваемости, изменение стоимости. Барчарт - сумма продаж.
+3.2. What-if Heatmap Продажи по товарам по месяцам. Цвет - сумма продаж. 
+
+Вкладка 3 - это таблица с детализацией и дрилл-даунами. 
